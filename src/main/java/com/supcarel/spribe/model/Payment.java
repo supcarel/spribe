@@ -1,5 +1,6 @@
 package com.supcarel.spribe.model;
 
+import com.supcarel.spribe.model.enums.PaymentStatusEnum;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -29,6 +30,7 @@ public class Payment extends DateAudit {
     @Column(precision = 10, scale = 2, nullable = false)
     private BigDecimal amount; //TODO
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private String status;
+    private PaymentStatusEnum status;
 }

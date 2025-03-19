@@ -1,5 +1,6 @@
 package com.supcarel.spribe.model;
 
+import com.supcarel.spribe.model.enums.BookingStatusEnum;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -37,12 +38,10 @@ public class Booking extends DateAudit {
     @Column(name = "total_price", precision = 10, scale = 2, nullable = false)
     private BigDecimal totalPrice; //TODO
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private String status;
+    private BookingStatusEnum status;
 
     @Column(name = "expires_at")
     private Instant expiresAt;
-
-    @OneToMany(mappedBy = "booking", cascade = CascadeType.ALL)
-    private List<Payment> payments; //TODO delete
 }

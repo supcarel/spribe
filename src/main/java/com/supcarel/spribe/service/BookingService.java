@@ -1,15 +1,22 @@
 package com.supcarel.spribe.service;
 
 import com.supcarel.spribe.exception.BookingAlreadyExistsException;
+import com.supcarel.spribe.exception.BookingDoesNotBelongToUserException;
 import com.supcarel.spribe.exception.ResourceNotFoundException;
+import com.supcarel.spribe.exception.UnitNotAvailableException;
+import com.supcarel.spribe.mapper.BookingMapper;
 import com.supcarel.spribe.model.Booking;
 import com.supcarel.spribe.model.Unit;
 import com.supcarel.spribe.model.User;
 import com.supcarel.spribe.model.enums.BookingStatusEnum;
+import com.supcarel.spribe.payload.request.BookingRequest;
+import com.supcarel.spribe.payload.response.BookingResponse;
+import com.supcarel.spribe.redis.RedisService;
 import com.supcarel.spribe.repository.BookingRepository;
 import com.supcarel.spribe.repository.UnitRepository;
 import com.supcarel.spribe.repository.UserRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,33 +28,35 @@ import java.util.UUID;
 
 @Slf4j
 @Service
-@Transactional
 public class BookingService {
     private final BookingRepository bookingRepository;
     private final UnitRepository unitRepository;
     private final UserRepository userRepository;
+    private final RedisService redisService;
+    @Value("${app.booking.expiration-time}")
+    private int bookingExpirationTime;
 
-    private final CacheService cacheService;
-
-    public BookingService(BookingRepository bookingRepository, UnitRepository unitRepository, UserRepository userRepository, CacheService cacheService) {
+    public BookingService(BookingRepository bookingRepository, UnitRepository unitRepository, UserRepository userRepository, RedisService redisService) {
         this.bookingRepository = bookingRepository;
         this.unitRepository = unitRepository;
         this.userRepository = userRepository;
-        this.cacheService = cacheService;
+        this.redisService = redisService;
     }
 
-    public Booking createBooking(UUID userId, UUID unitId, Instant startDate, Instant endDate) {
+    @Transactional
+    public BookingResponse createBooking(BookingRequest bookingRequest, UUID userId) {
         User user = userRepository.findById(userId).orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + userId));
 
+        UUID unitId = bookingRequest.getUnitId();
         Unit unit = unitRepository.findById(unitId).orElseThrow(() -> new ResourceNotFoundException("Unit not found with id: " + unitId));
 
         // CHeck if unit is available
         if (!unit.isAvailable()) {
-            throw new BookingAlreadyExistsException("Unit is not available for booking");
+            throw new UnitNotAvailableException("Unit is not available for booking");
         }
 
         // Check overlapping bookings
-        if (bookingRepository.countOverlappingBookings(unitId, startDate, endDate) > 0) {
+        if (bookingRepository.countOverlappingBookings(unitId, bookingRequest.getStartDate(), bookingRequest.getEndDate()) > 0) {
             throw new BookingAlreadyExistsException("Unit is already booked for the selected dates");
         }
 
@@ -55,66 +64,64 @@ public class BookingService {
         Booking booking = new Booking();
         booking.setUser(user);
         booking.setUnit(unit);
-        booking.setStartDate(startDate);
-        booking.setEndDate(endDate);
+        booking.setStartDate(bookingRequest.getStartDate());
+        booking.setEndDate(bookingRequest.getEndDate());
         booking.setTotalPrice(unit.getTotalPrice()); //TODO calculate total price
         booking.setStatus(BookingStatusEnum.PENDING);
-        booking.setExpiresAt(Instant.now().plus(Duration.ofMinutes(15))); //TODO add to properties
-        booking.setCreatedAt(Instant.now());
-        booking.setUpdatedAt(Instant.now());
+        booking.setExpiresAt(Instant.now().plus(Duration.ofMinutes(bookingExpirationTime)));
 
         Booking savedBooking = bookingRepository.save(booking);
 
-        // Update cache
-        cacheService.refreshCache();
+        // Set expiration time for booking
+        redisService.createBookingExpiration(savedBooking.getId());
 
-        return savedBooking;
+        //TODO eventService.createEvent(...);
+        //TODO cacheService.updateCache(...);
+        
+        return BookingMapper.MAPPER.mapEntityToResponse(savedBooking);
     }
 
     @Transactional(readOnly = true)
-    public Optional<Booking> getBookingById(UUID id) {
-        return bookingRepository.findById(id);
+    public Optional<BookingResponse> getBookingById(UUID id) {
+        return bookingRepository.findById(id).map(BookingMapper.MAPPER::mapEntityToResponse);
     }
 
     @Transactional(readOnly = true)
-    public List<Booking> getBookingsByUserId(UUID userId) {
-        return bookingRepository.findByUserId(userId);
+    public List<BookingResponse> getBookingsByUserId(UUID userId) {
+        return bookingRepository.findByUserId(userId).stream()
+                .map(BookingMapper.MAPPER::mapEntityToResponse)
+                .toList();
     }
 
-    @Transactional(readOnly = true)
-    public List<Booking> getBookingsByUnitId(UUID unitId) {
-        return bookingRepository.findByUnitId(unitId);
-    }
-
-    public void cancelBooking(UUID bookingId, UUID userId) {
+    @Transactional
+    public BookingResponse cancelBooking(UUID bookingId, UUID userId) {
         Booking booking = bookingRepository.findById(bookingId).orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + bookingId));
 
         if (!booking.getUser().getId().equals(userId)) {
-            throw new BookingAlreadyExistsException("User does not have permission to cancel this booking");
+            throw new BookingDoesNotBelongToUserException("User does not have permission to cancel this booking");
         }
 
         booking.setStatus(BookingStatusEnum.CANCELLED);
-        bookingRepository.save(booking);
+        Booking canceledBooking = bookingRepository.save(booking);
 
-        // Update cache
-        cacheService.refreshCache();
+        //TODO cacheService.updateCache(...);
+        //TODO eventService.createEvent(...);
+
+        return BookingMapper.MAPPER.mapEntityToResponse(canceledBooking);
     }
 
-    public void expireBookings() {
-        List<Booking> expiredBookings = bookingRepository.findByStatusAndExpiresAtBefore(BookingStatusEnum.PENDING.name(), Instant.now());
+    @Transactional
+    public void processExpiration(UUID bookingId) {
+        bookingRepository.findById(bookingId).ifPresent(booking -> {
+            if (booking.getStatus() == BookingStatusEnum.PENDING) {
+                booking.setStatus(BookingStatusEnum.EXPIRED);
+                bookingRepository.save(booking);
 
-        for (Booking booking : expiredBookings) {
-            booking.setStatus(BookingStatusEnum.EXPIRED);
-            booking.setUpdatedAt(Instant.now());
-            bookingRepository.save(booking);
+                //TODO cacheService.updateCache(...);
+                //TODO eventService.createEvent(...);
 
-            // Создаем событие об истечении срока бронирования
-            // eventService.createEvent(...);
-        }
-
-        if (!expiredBookings.isEmpty()) {
-            // Update cache
-            cacheService.refreshCache();
-        }
+                log.info("Booking {} expired via Redis", bookingId);
+            }
+        });
     }
 }

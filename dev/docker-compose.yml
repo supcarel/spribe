@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: booking_postgres
+    environment:
+      POSTGRES_DB: booking_db
+      POSTGRES_USER: booking_user
+      POSTGRES_PASSWORD: booking_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - C:/docker/postgres_data:/var/lib/postgresql/data
+    networks:
+      - booking_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: booking_redis
+    command: redis-server --requirepass redispass --appendonly yes --notify-keyspace-events Ex --protected-mode no --io-threads 4
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - booking_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  booking_network:
+    driver: bridge

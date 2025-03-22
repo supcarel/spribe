@@ -13,6 +13,10 @@ java {
 	}
 }
 
+ext {
+	mapstructVersion = "1.6.2"
+}
+
 configurations {
 	compileOnly {
 		extendsFrom annotationProcessor
@@ -35,6 +39,18 @@ dependencies {
 
 	runtimeOnly 'org.postgresql:postgresql:42.7.3'
 
+	//Docs
+	implementation group: 'org.springdoc', name: 'springdoc-openapi-starter-webmvc-ui', version: '2.7.0'
+
+	// MapStruct
+	implementation "org.mapstruct:mapstruct:${mapstructVersion}"
+	annotationProcessor 'org.projectlombok:lombok:1.18.34'
+	annotationProcessor "org.mapstruct:mapstruct-processor:${mapstructVersion}"
+
+	// Redis
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+	implementation 'io.lettuce:lettuce-core:6.2.4.RELEASE'
+	//implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.2'
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

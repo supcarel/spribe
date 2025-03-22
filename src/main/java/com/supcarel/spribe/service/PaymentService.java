@@ -1,106 +1,95 @@
 package com.supcarel.spribe.service;
 
 import com.supcarel.spribe.exception.PaymentException;
+import com.supcarel.spribe.exception.PaymentStatusException;
 import com.supcarel.spribe.exception.ResourceNotFoundException;
+import com.supcarel.spribe.mapper.PaymentMapper;
 import com.supcarel.spribe.model.Booking;
 import com.supcarel.spribe.model.Payment;
 import com.supcarel.spribe.model.User;
 import com.supcarel.spribe.model.enums.BookingStatusEnum;
 import com.supcarel.spribe.model.enums.PaymentStatusEnum;
+import com.supcarel.spribe.payload.request.PaymentRequest;
+import com.supcarel.spribe.payload.request.PaymentStatusRequest;
+import com.supcarel.spribe.payload.response.PaymentResponse;
+import com.supcarel.spribe.redis.RedisService;
 import com.supcarel.spribe.repository.BookingRepository;
 import com.supcarel.spribe.repository.PaymentRepository;
 import com.supcarel.spribe.repository.UserRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+@Slf4j
 @Service
-@Transactional
 public class PaymentService {
     private final PaymentRepository paymentRepository;
     private final BookingRepository bookingRepository;
     private final UserRepository userRepository;
+    private final RedisService redisService;
 
     public PaymentService(
             PaymentRepository paymentRepository,
             BookingRepository bookingRepository,
-            UserRepository userRepository) {
+            UserRepository userRepository, RedisService redisService) {
         this.paymentRepository = paymentRepository;
         this.bookingRepository = bookingRepository;
         this.userRepository = userRepository;
+        this.redisService = redisService;
     }
 
+    @Transactional
+    public PaymentResponse createPayment(PaymentRequest paymentRequest, UUID userId) {
+        Booking booking = bookingRepository.findById(paymentRequest.getBookingId())
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + paymentRequest.getBookingId()));
 
-    public Payment createPayment(UUID bookingId, UUID userId, BigDecimal amount) {
-        // Проверяем существование бронирования
-        Booking booking = bookingRepository.findById(bookingId)
-                .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + bookingId));
-
-        // Проверяем существование пользователя
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + userId));
 
-        // Проверяем соответствие пользователя и бронирования
         if (!booking.getUser().getId().equals(userId)) {
+            log.error("User does not have permission to pay for this booking. BookingId={}, UserId={}", paymentRequest.getBookingId(), userId);
             throw new PaymentException("User does not have permission to pay for this booking");
         }
 
-        // Проверяем статус бронирования
-        if (!booking.getStatus().equals("PENDING")) {
-            throw new PaymentException("Cannot create payment for booking with status: " + booking.getStatus());
+        if (!BookingStatusEnum.PENDING.equals(booking.getStatus())) {
+            log.error("Cannot create payment {} for booking with status: {}", booking.getId(), booking.getStatus());
+            throw new PaymentStatusException("Cannot create payment for booking with status: " + booking.getStatus());
         }
 
-        // Создаем платеж
         Payment payment = new Payment();
         payment.setBooking(booking);
         payment.setUser(user);
-        payment.setAmount(amount);
+        payment.setAmount(booking.getTotalPrice());
         payment.setStatus(PaymentStatusEnum.PENDING);
-        payment.setCreatedAt(Instant.now());
 
         Payment savedPayment = paymentRepository.save(payment);
 
-        // Создаем событие о создании платежа
-        // eventService.createEvent(...);
+        //TODO cacheService.updateCache(...);
+        //TODO eventService.createEvent(...);
 
-        return savedPayment;
+        return PaymentMapper.MAPPER.mapEntityToResponse(savedPayment);
     }
-
 
     @Transactional(readOnly = true)
     public Optional<Payment> getPaymentById(UUID id) {
         return paymentRepository.findById(id);
     }
 
+    @Transactional
+    public void processPayment(PaymentStatusRequest paymentStatus) {
+        Payment payment = paymentRepository.findById(paymentStatus.getPaymentId())
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found with id: " + paymentStatus.getPaymentId()));
 
-    @Transactional(readOnly = true)
-    public List<Payment> getPaymentsByBookingId(UUID bookingId) {
-        return paymentRepository.findByBookingId(bookingId);
-    }
-
-
-    @Transactional(readOnly = true)
-    public List<Payment> getPaymentsByUserId(UUID userId) {
-        return paymentRepository.findByUserId(userId);
-    }
-
-    public Payment processPayment(UUID paymentId) {
-        Payment payment = paymentRepository.findById(paymentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Payment not found with id: " + paymentId));
-
-        if (!payment.getStatus().equals(PaymentStatusEnum.PENDING)) {
+        if (!PaymentStatusEnum.PENDING.equals(payment.getStatus())) {
             throw new PaymentException("Payment is not in PENDING status");
         }
 
-        // Здесь была бы интеграция с платежной системой
-        // Эмулируем успешную оплату
         payment.setStatus(PaymentStatusEnum.PAID);
-        Payment updatedPayment = paymentRepository.save(payment);
+        paymentRepository.save(payment);
 
         // Обновляем статус бронирования
         Booking booking = payment.getBooking();
@@ -108,26 +97,32 @@ public class PaymentService {
         booking.setUpdatedAt(Instant.now());
         bookingRepository.save(booking);
 
-        // Создаем события
-        // eventService.createEvent(...); // Событие об успешной оплате
-        // eventService.createEvent(...); // Событие о подтверждении бронирования
+        redisService.cancelBookingExpiration(booking.getId());
 
-        return updatedPayment;
+        //TODO eventService.createEvent(...); // Событие об успешной оплате
+        //TODO eventService.createEvent(...); // Событие о подтверждении бронирования
     }
 
+    @Transactional
     public Payment cancelPayment(UUID paymentId) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found with id: " + paymentId));
 
-        if (!payment.getStatus().equals(PaymentStatusEnum.PENDING)) {
+        if (!PaymentStatusEnum.PENDING.equals(payment.getStatus())) {
             throw new PaymentException("Only PENDING payments can be cancelled");
         }
 
         payment.setStatus(PaymentStatusEnum.CANCELLED);
         Payment updatedPayment = paymentRepository.save(payment);
 
-        // Создаем событие об отмене платежа
-        // eventService.createEvent(...);
+        Booking booking = payment.getBooking();
+        booking.setStatus(BookingStatusEnum.CANCELLED);
+        booking.setUpdatedAt(Instant.now());
+        bookingRepository.save(booking);
+
+        //TODO cacheService.updateCache(...);
+        //TODO eventService.createEvent(...) оздаем событие об отмене платежа;
+        //TODO eventService.createEvent(...); // Событие о отмене бронирования
 
         return updatedPayment;
     }

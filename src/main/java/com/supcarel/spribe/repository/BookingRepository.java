@@ -12,11 +12,7 @@ import java.util.UUID;
 
 @Repository
 public interface BookingRepository extends JpaRepository<Booking, UUID> {
-
     List<Booking> findByUserId(UUID userId);
-    List<Booking> findByUnitId(UUID uuidId);
-
-    List<Booking> findByStatusAndExpiresAtBefore(String status, Instant expiresAt);
 
     @Query("SELECT COUNT(b) FROM Booking b WHERE " +
             "b.unit.id = :unitId AND " +

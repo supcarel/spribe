@@ -44,4 +44,7 @@ public class Booking extends DateAudit {
 
     @Column(name = "expires_at")
     private Instant expiresAt;
+
+   /* @OneToMany(mappedBy = "unit", cascade = CascadeType.ALL)
+    private List<Booking> bookings;*/
 }

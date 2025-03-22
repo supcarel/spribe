@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS unit_types (
 
 CREATE TABLE IF NOT EXISTS units (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES users(id),
+    owner_id UUID NOT NULL REFERENCES users(id),
     unit_type_id INT NOT NULL REFERENCES unit_types(id),
     rooms_count INT NOT NULL,
     floor INT,

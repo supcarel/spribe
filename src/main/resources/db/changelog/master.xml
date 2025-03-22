@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.4.xsd">
+
+    <changeSet author="Grigoriy.Supcarel" id="create-tables">
+        <sqlFile path="classpath:db/changelog/v1/001-create-initial-schema.sql"/>
+    </changeSet>
+
+    <changeSet author="Grigoriy.Supcarel" id="insert-unit-types">
+        <sqlFile path="classpath:db/changelog/v1/002-insert-unit-types.sql"/>
+    </changeSet>
+
+    <changeSet author="Grigoriy.Supcarel" id="create-indexes">
+        <sqlFile path="classpath:db/changelog/v1/003-create-indexes.sql"/>
+    </changeSet>
+
+
+    <changeSet author="Grigoriy.Supcarel" id="insert-sample-users" context="test">
+        <sqlFile path="classpath:db/changelog/test/001-insert-sample-users.sql"/>
+    </changeSet>
+</databaseChangeLog>
